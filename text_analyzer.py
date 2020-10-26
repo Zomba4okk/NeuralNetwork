@@ -1,10 +1,11 @@
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 import tensorflow as tf
 
 from tools.data_preprocessing_tools import get_batch
 
 if TYPE_CHECKING:
+    from numpy import ndarray
     from sklearn.utils import Bunch
 
 
@@ -16,6 +17,8 @@ class TextAnalyzer:
             hidden_1_size: int,
             hidden_2_size: int
     ) -> None:
+        self.total_words_count = input_size
+        self.categories_count = output_size
         self.input_tensor = tf.placeholder(tf.float32, [None, input_size], name='input')
         self.output_tensor = tf.placeholder(tf.float32, [None, output_size], name='output')
         self.weights = {
@@ -29,6 +32,7 @@ class TextAnalyzer:
             'out': tf.Variable(tf.random_normal([output_size]))
         }
         self.session = tf.Session()
+        self.prediction = None
 
     def _multilayer_perceptron(self) -> tf.Tensor:
         layer_1_multiplication = tf.matmul(self.input_tensor, self.weights['h1'])
@@ -48,19 +52,22 @@ class TextAnalyzer:
 
     def train_model(
             self,
-            training_group: 'Bunch',
+            training_groups: 'Bunch',
             learning_rate: int,
             training_epochs: int,
             batch_size: int,
             display_step: int,
-            test_group: Optional['Bunch'] = None,
+            test_groups: Optional['Bunch'] = None,
             path: Optional[str] = None
     ) -> None:
         # Construct model
-        prediction = self._multilayer_perceptron()
+        self.prediction = self._multilayer_perceptron()
 
         # Define loss and optimizer
-        loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=prediction, labels=self.output_tensor))
+        loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
+            logits=self.prediction,
+            labels=self.output_tensor
+        ))
         optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss)
 
         # Initializing the variables
@@ -69,10 +76,15 @@ class TextAnalyzer:
         self.session.run(init)
         for epoch in range(training_epochs):
             avg_cost = 0.
-            total_batch = int(len(training_group.data) / batch_size)
+            total_batch = int(len(training_groups.data) / batch_size)
             # Loop over all batches
-            for i in range(total_batch):
-                batch_x, batch_y = get_batch(training_group, i, batch_size)
+            for index in range(total_batch):
+                batch_x, batch_y = get_batch(
+                    training_groups,
+                    index, batch_size,
+                    self.total_words_count,
+                    self.categories_count
+                )
                 # Run optimization op (backprop) and cost op (to get loss value)
                 cost, _ = self.session.run(
                     [loss, optimizer],
@@ -87,18 +99,26 @@ class TextAnalyzer:
 
         print('Optimization Finished.')
 
-        if test_group:
+        if test_groups:
             # Test model
-            correct_prediction = tf.equal(tf.argmax(prediction, 1), tf.argmax(self.output_tensor, 1))
+            correct_prediction = tf.equal(tf.argmax(self.prediction, 1), tf.argmax(self.output_tensor, 1))
 
             # Calculate accuracy
             accuracy = tf.reduce_mean(tf.cast(correct_prediction, 'float'))
-            total_test_data = len(test_group.target)
-            batch_x_test, batch_y_test = get_batch(test_group, 0, total_test_data)
-            print('Accuracy:', accuracy.eval({self.input_tensor: batch_x_test, self.output_tensor: batch_y_test}))
+            batch_x_test, batch_y_test = get_batch(
+                test_groups,
+                0,
+                len(test_groups.target),
+                self.total_words_count,
+                self.categories_count
+            )
+            print(
+                'Accuracy:',
+                accuracy.eval({self.input_tensor: batch_x_test, self.output_tensor: batch_y_test}, session=self.session)
+            )
 
         if path:
-            # [NEW] Save the variables to disk
+            # Save the variables to disk
             saver = tf.train.Saver()
             save_path = saver.save(self.session, path)
 
@@ -109,4 +129,7 @@ class TextAnalyzer:
 
         saver.restore(self.session, path)
         print('Model restored.')
+
+    def get_prediction(self, texts: 'ndarray') -> List[int]:
+        return self.session.run(tf.argmax(self.prediction, 1), feed_dict={self.input_tensor: texts})
 
