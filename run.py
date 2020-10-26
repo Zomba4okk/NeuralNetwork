@@ -34,14 +34,14 @@ if __name__ == '__main__':
         batch_size,
         display_step,
         test_groups=test_news_groups,
-        path='C:/Users/Antic/Desktop/a/NeuralNetwork/model.ckpt'
+        # path='C:/Users/Antic/Desktop/a/NeuralNetwork/model.ckpt'
     )
 
     ### Test model ###
-    # texts, correct_categories_codes = get_batch(test_news_groups, 0, 10, total_words_count, classes_count)
-    #
-    # predicted_categories = text_analyzer.get_prediction(texts)
-    #
-    # print(
-    #     f'Predicted categories: {predicted_categories}\nCorrect categories:   {np.argmax(correct_categories_codes, 1)}'
-    # )
+    texts, correct_categories_codes = get_batch(test_news_groups, 0, 10, total_words_count, classes_count)
+
+    predicted_categories = text_analyzer.get_prediction(texts)
+
+    print(
+        f'Predicted categories: {predicted_categories}\nCorrect categories:   {np.argmax(correct_categories_codes, 1)}'
+    )

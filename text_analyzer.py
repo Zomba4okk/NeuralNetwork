@@ -81,7 +81,8 @@ class TextAnalyzer:
             for index in range(total_batch):
                 batch_x, batch_y = get_batch(
                     training_groups,
-                    index, batch_size,
+                    index,
+                    batch_size,
                     self.total_words_count,
                     self.categories_count
                 )
