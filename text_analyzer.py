@@ -1,8 +1,16 @@
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List, Optional, Iterable
 
 import tensorflow as tf
 
-from tools.data_preprocessing_tools import get_batch
+from constants import (
+    batch_size,
+    display_step,
+    hidden_1_size,
+    hidden_2_size,
+    learning_rate,
+    training_epochs,
+)
+from tools.data_preprocessing_tools import TextProcessingService
 
 if TYPE_CHECKING:
     from numpy import ndarray
@@ -10,29 +18,32 @@ if TYPE_CHECKING:
 
 
 class TextAnalyzer:
-    def __init__(
-            self,
-            input_size: int,
-            output_size: int,
-            hidden_1_size: int,
-            hidden_2_size: int
-    ) -> None:
-        self.total_words_count = input_size
-        self.categories_count = output_size
-        self.input_tensor = tf.placeholder(tf.float32, [None, input_size], name='input')
-        self.output_tensor = tf.placeholder(tf.float32, [None, output_size], name='output')
+    hidden_1_size: int = hidden_1_size
+    hidden_2_size: int = hidden_2_size
+    learning_rate: int = learning_rate
+    training_epochs: int = training_epochs
+    batch_size: int = batch_size
+    display_step: int = display_step
+
+    def __init__(self, data_groups_list: Iterable['Bunch']) -> None:
+        self.service = TextProcessingService(data_groups_list)
+
+        self.input_tensor = tf.placeholder(tf.float32, [None, self.service.total_words_count], name='input')
+        self.output_tensor = tf.placeholder(tf.float32, [None, self.service.categories_count], name='output')
+
         self.weights = {
-            'h1': tf.Variable(tf.random_normal([input_size, hidden_1_size])),
-            'h2': tf.Variable(tf.random_normal([hidden_1_size, hidden_2_size])),
-            'out': tf.Variable(tf.random_normal([hidden_2_size, output_size]))
+            'h1': tf.Variable(tf.random_normal([self.service.total_words_count, self.hidden_1_size])),
+            'h2': tf.Variable(tf.random_normal([self.hidden_1_size, self.hidden_2_size])),
+            'out': tf.Variable(tf.random_normal([self.hidden_2_size, self.service.categories_count]))
         }
         self.biases = {
-            'b1': tf.Variable(tf.random_normal([hidden_1_size])),
-            'b2': tf.Variable(tf.random_normal([hidden_2_size])),
-            'out': tf.Variable(tf.random_normal([output_size]))
+            'b1': tf.Variable(tf.random_normal([self.hidden_1_size])),
+            'b2': tf.Variable(tf.random_normal([self.hidden_2_size])),
+            'out': tf.Variable(tf.random_normal([self.service.categories_count]))
         }
+
+        self.prediction = self._multilayer_perceptron()
         self.session = tf.Session()
-        self.prediction = None
 
     def _multilayer_perceptron(self) -> tf.Tensor:
         layer_1_multiplication = tf.matmul(self.input_tensor, self.weights['h1'])
@@ -52,40 +63,28 @@ class TextAnalyzer:
 
     def train_model(
             self,
-            training_groups: 'Bunch',
-            learning_rate: int,
-            training_epochs: int,
-            batch_size: int,
-            display_step: int,
-            test_groups: Optional['Bunch'] = None,
+            training_data_groups: 'Bunch',
+            test_data_groups: Optional['Bunch'],
             path: Optional[str] = None
     ) -> None:
-        # Construct model
-        self.prediction = self._multilayer_perceptron()
-
         # Define loss and optimizer
         loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
             logits=self.prediction,
             labels=self.output_tensor
         ))
-        optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss)
+        optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate).minimize(loss)
 
         # Initializing the variables
         init = tf.global_variables_initializer()
 
         self.session.run(init)
-        for epoch in range(training_epochs):
+
+        for epoch in range(self.training_epochs):
             avg_cost = 0.
-            total_batch = int(len(training_groups.data) / batch_size)
+            total_batch = int(len(training_data_groups.data) / self.batch_size)
             # Loop over all batches
             for index in range(total_batch):
-                batch_x, batch_y = get_batch(
-                    training_groups,
-                    index,
-                    batch_size,
-                    self.total_words_count,
-                    self.categories_count
-                )
+                batch_x, batch_y = self.service.get_batch(training_data_groups, index, self.batch_size)
                 # Run optimization op (backprop) and cost op (to get loss value)
                 cost, _ = self.session.run(
                     [loss, optimizer],
@@ -100,18 +99,16 @@ class TextAnalyzer:
 
         print('Optimization Finished.')
 
-        if test_groups:
+        if test_data_groups:
             # Test model
             correct_prediction = tf.equal(tf.argmax(self.prediction, 1), tf.argmax(self.output_tensor, 1))
 
             # Calculate accuracy
             accuracy = tf.reduce_mean(tf.cast(correct_prediction, 'float'))
-            batch_x_test, batch_y_test = get_batch(
-                test_groups,
+            batch_x_test, batch_y_test = self.service.get_batch(
+                test_data_groups,
                 0,
-                len(test_groups.target),
-                self.total_words_count,
-                self.categories_count
+                len(test_data_groups.target)
             )
             print(
                 'Accuracy:',
@@ -119,11 +116,14 @@ class TextAnalyzer:
             )
 
         if path:
-            # Save the variables to disk
-            saver = tf.train.Saver()
-            save_path = saver.save(self.session, path)
+            self.save_model(path)
 
-            print(f'Model saved in path: {save_path}')
+    def save_model(self, path: str) -> None:
+        # Save the variables to disk
+        saver = tf.train.Saver()
+        save_path = saver.save(self.session, path)
+
+        print(f'Model saved in path: {save_path}')
 
     def load_model(self, path: str) -> None:
         saver = tf.train.Saver()
